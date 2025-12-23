@@ -1,0 +1,22 @@
+/* Semantic color palette using CSS variables (HSL) */
+/* Default theme */
+:root {
+  --color-primary: 262 83% 58%; /* purple */
+  --color-on-primary: 0 0% 100%;
+  --color-bg: 210 20% 98%;
+  --color-text: 220 14% 20%;
+  --color-surface: 0 0% 100%;
+  --color-border: 220 13% 91%;
+  --color-accent: 10 90% 60%;
+}
+
+/* Example alternative theme (ocean) */
+.theme-ocean {
+  --color-primary: 199 89% 48%; /* cyan/blue */
+  --color-on-primary: 0 0% 100%;
+  --color-bg: 210 40% 96%;
+  --color-text: 222 47% 11%;
+  --color-surface: 0 0% 100%;
+  --color-border: 210 40% 90%;
+  --color-accent: 28 95% 54%;
+}
