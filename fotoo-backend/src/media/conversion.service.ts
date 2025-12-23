@@ -66,9 +66,17 @@ export class ConversionService {
     const hostDir = inputPath.replace(/\\/g, '/').replace(/\/[^/]*$/, '');
     const inName = basename(inputPath);
     const outName = basename(outputPath);
-    await this.runDocker('ghcr.io/strukturag/libheif:latest', ['heif-convert', `/work/${inName}`, `/work/${outName}`], [
-      { hostPath: hostDir, containerPath: '/work' },
-    ]);
+    await this.runDocker(
+      'jrottenberg/ffmpeg:6.1-alpine',
+      [
+        '-i',
+        `/work/${inName}`,
+        '-frames:v',
+        '1',
+        `/work/${outName}`,
+      ],
+      [{ hostPath: hostDir, containerPath: '/work' }],
+    );
   }
 
   private async convertHeicToJpegLocal(inputPath: string, outputPath: string) {
