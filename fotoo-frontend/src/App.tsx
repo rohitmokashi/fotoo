@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Upload, Trash2, Video, CheckCircle, Circle, FolderOpen, PenSquare, UserCog, X, Images } from 'lucide-react';
+// Using lucide-react for consistent, high-quality icons
 import ThemeSwitcher from './components/ThemeSwitcher';
 import LoginForm from './components/LoginForm';
 import AdminPanel from './components/AdminPanel';
@@ -6,7 +8,7 @@ import { getAuth, clearAuth, authHeader } from './lib/auth';
 import AlbumPanel from './components/AlbumPanel';
 import AlbumMembersPanel from './components/AlbumMembersPanel';
 import type { Album } from './lib/albums';
-import { listAlbumMedia, addAssetToAlbum } from './lib/albums';
+import { listAlbumMedia, addAssetToAlbum, listAlbums } from './lib/albums';
 import * as exifr from 'exifr';
 
 type MediaAsset = {
@@ -173,6 +175,11 @@ function App() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [auth, setAuthState] = useState(() => getAuth());
   const [selectedAlbum, setSelectedAlbum] = useState<Album | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showAlbumsModal, setShowAlbumsModal] = useState(false);
+  const [showManageAlbumModal, setShowManageAlbumModal] = useState(false);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [albums, setAlbums] = useState<Album[]>([]);
 
   const formatDateHeading = (iso: string) => {
     const d = new Date(iso);
@@ -208,6 +215,19 @@ function App() {
     load().catch(console.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAlbum, auth?.accessToken]);
+
+  useEffect(() => {
+    const loadAlbums = async () => {
+      if (!auth?.accessToken) return;
+      try {
+        const data = await listAlbums(auth.accessToken);
+        setAlbums(data);
+      } catch (e) {
+        // ignore
+      }
+    };
+    loadAlbums();
+  }, [auth?.accessToken]);
 
   const onSelectFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -248,26 +268,55 @@ function App() {
     }
   };
 
-  const onDelete = async (asset: MediaAsset) => {
+  // Per-item delete removed in favor of bulk delete
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const deleteSelected = async () => {
     if (!auth?.accessToken) return;
-    // Fetch albums containing this asset
-    const res = await fetch(`${API_BASE}/media/${asset.id}/albums`, { headers: { ...authHeader(auth.accessToken) } });
-    const albums: { id: string; name: string }[] = res.ok ? await res.json() : [];
-    const msg = albums.length > 0
-      ? `This image is in ${albums.length} album(s): ${albums.map(a => a.name).join(', ')}. Deleting will remove it from those albums. Continue?`
-      : 'Delete this image permanently?';
-    if (!confirm(msg)) return;
-    const del = await fetch(`${API_BASE}/media/${asset.id}`, { method: 'DELETE', headers: { ...authHeader(auth.accessToken) } });
-    if (del.ok) {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} selected item(s)?`)) return;
+    setBusy(true);
+    try {
+      let failed = 0;
+      for (const id of ids) {
+        const del = await fetch(`${API_BASE}/media/${id}`, { method: 'DELETE', headers: { ...authHeader(auth.accessToken) } });
+        if (!del.ok) failed++;
+      }
       await load();
-    } else {
-      alert('Failed to delete image');
+      clearSelection();
+      if (failed > 0) alert(`Failed to delete ${failed} item(s). Some items may be in albums or not owned by you.`);
+    } finally {
+      setBusy(false);
     }
   };
 
   const loggedIn = !!auth?.accessToken;
   const isAdmin = auth?.user?.role === 'admin';
   const grouping = useMemo(() => groupByDay(assets), [assets]);
+
+  const Modal = ({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) => (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
+      <div className="w-full max-w-2xl rounded-xl border border-border bg-surface shadow-xl">
+        <div className="flex items-center justify-between border-b border-border p-3">
+          <div className="text-sm font-semibold text-text">{title}</div>
+          <button onClick={onClose} className="inline-flex items-center justify-center rounded-md p-1 hover:bg-muted" title="Close" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="max-h-[70vh] overflow-auto p-4">{children}</div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-full">
@@ -282,13 +331,79 @@ function App() {
             <ThemeSwitcher />
             {loggedIn ? (
               <>
+                {/* Quick album switcher */}
+                <button
+                  onClick={() => setSelectedAlbum(null)}
+                  className="inline-flex items-center rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-muted"
+                  title="All media"
+                >
+                  <Images className="w-5 h-5" />
+                </button>
+                <select
+                  value={selectedAlbum?.id ?? ''}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    const album = albums.find(a => a.id === id) || null;
+                    setSelectedAlbum(album);
+                  }}
+                  className="rounded-lg border border-border bg-surface px-2 py-2 text-sm min-w-[160px]"
+                  title="Switch album"
+                >
+                  <option value="">Select album…</option>
+                  {albums.map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+                {/* Albums modal trigger (advanced) */}
+                {/* Albums modal trigger */}
+                <button
+                  onClick={() => setShowAlbumsModal(true)}
+                  className="inline-flex items-center rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-muted"
+                  title="Albums"
+                >
+                  <FolderOpen className="w-5 h-5" />
+                </button>
+                {/* Manage album modal trigger (only when album selected) */}
+                {selectedAlbum && (
+                  <button
+                    onClick={() => setShowManageAlbumModal(true)}
+                    className="inline-flex items-center rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-muted"
+                    title="Manage Album"
+                  >
+                    <PenSquare className="w-5 h-5" />
+                  </button>
+                )}
+                {/* Admin modal trigger (users) */}
+                {isAdmin && (
+                  <button
+                    onClick={() => setShowAdminModal(true)}
+                    className="inline-flex items-center rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-muted"
+                    title="Admin"
+                  >
+                    <UserCog className="w-5 h-5" />
+                  </button>
+                )}
                 <input ref={inputRef} type="file" multiple accept="image/*,video/*" onChange={onSelectFile} className="hidden" />
                 <button
                   onClick={() => inputRef.current?.click()}
                   disabled={busy}
-                  className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-onprimary hover:opacity-90 disabled:opacity-50"
+                  className="inline-flex items-center rounded-lg bg-primary px-3 py-2 text-onprimary hover:opacity-90 disabled:opacity-50"
+                  title={busy ? 'Uploading' : 'Upload'}
                 >
-                  {busy ? 'Uploading…' : 'Upload'}
+                  <Upload className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={deleteSelected}
+                  disabled={busy || selected.size === 0}
+                  className="relative inline-flex items-center rounded-lg bg-red-600 px-3 py-2 text-white hover:opacity-90 disabled:opacity-50"
+                  title={`Delete Selected (${selected.size})`}
+                >
+                  <Trash2 className="w-5 h-5" />
+                  {selected.size > 0 && (
+                    <span className="absolute -top-1 -right-1 inline-flex items-center justify-center rounded-full bg-white text-red-600 text-[10px] w-4 h-4 border border-red-600">
+                      {selected.size}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => { clearAuth(); setAuthState(null); setAssets([]); }}
@@ -313,31 +428,28 @@ function App() {
         {error && (
           <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-red-700">{error}</div>
         )}
-        {loggedIn && isAdmin && (
-          <div className="mb-6">
-            <AdminPanel />
-          </div>
+        {/* Modals */}
+        {loggedIn && showAlbumsModal && (
+          <Modal title="Albums" onClose={() => setShowAlbumsModal(false)}>
+            <AlbumPanel token={auth!.accessToken} selected={selectedAlbum} onSelect={(a) => { setSelectedAlbum(a); setShowAlbumsModal(false); }} />
+          </Modal>
         )}
-
-        {/* Albums */}
-        {loggedIn && (
-          <>
-            <div className="mb-6">
-              <AlbumPanel token={auth!.accessToken} selected={selectedAlbum} onSelect={setSelectedAlbum} />
-            </div>
-            {selectedAlbum && (
-              <div className="mb-6">
-                <AlbumMembersPanel
-                  token={auth!.accessToken}
-                  album={selectedAlbum}
-                  currentUserRole={auth!.user.role}
-                  currentUserId={auth!.user.id}
-                  onDeleted={() => { setSelectedAlbum(null); load(); }}
-                  onRenamed={(name) => setSelectedAlbum({ ...selectedAlbum, name })}
-                />
-              </div>
-            )}
-          </>
+        {loggedIn && selectedAlbum && showManageAlbumModal && (
+          <Modal title={`Manage Album: ${selectedAlbum.name}`} onClose={() => setShowManageAlbumModal(false)}>
+            <AlbumMembersPanel
+              token={auth!.accessToken}
+              album={selectedAlbum}
+              currentUserRole={auth!.user.role}
+              currentUserId={auth!.user.id}
+              onDeleted={() => { setSelectedAlbum(null); setShowManageAlbumModal(false); load(); }}
+              onRenamed={(name) => setSelectedAlbum({ ...selectedAlbum, name })}
+            />
+          </Modal>
+        )}
+        {loggedIn && isAdmin && showAdminModal && (
+          <Modal title="Admin" onClose={() => setShowAdminModal(false)}>
+            <AdminPanel />
+          </Modal>
         )}
 
         {/* Gallery */}
@@ -356,41 +468,50 @@ function App() {
                       <div className="border-t border-border mt-2" />
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                      {grouping.groups[key].map((a) => (
-                        <article key={a.id} className="group rounded-xl overflow-hidden border border-border bg-surface shadow-sm">
-                          {(a.processedMimeType && a.processedMimeType.startsWith('image/')) ? (
-                            <img
-                              loading="lazy"
-                              src={`${API_BASE}/media/${a.id}/thumbnail?token=${encodeURIComponent(auth!.accessToken)}`}
-                              alt={a.key}
-                              className="aspect-square w-full object-cover"
-                              onError={(e) => (e.currentTarget.style.display = 'none')}
-                            />
-                          ) : (
-                            <div className="aspect-square flex items-center justify-center text-sm text-gray-500">
-                              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400">
-                                <polygon points="23 7 16 12 23 17 23 7" />
-                                <rect x="1" y="3" width="14" height="18" rx="2" ry="2"></rect>
-                              </svg>
-                            </div>
-                          )}
-                          <div className="p-3">
-                            <div className="text-sm text-gray-600">
-                              {new Date(a.capturedAt ?? a.createdAt).toLocaleString()}
-                            </div>
-                            {a.owner?.id === auth?.user?.id && (
-                              <div className="mt-2">
-                                <button
-                                  onClick={() => onDelete(a)}
-                                  className="rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700 hover:bg-red-100"
-                                >
-                                  Delete
-                                </button>
+                      {grouping.groups[key].map((a) => {
+                        const isSelected = selected.has(a.id);
+                        return (
+                          <article key={a.id} className={`group rounded-xl overflow-hidden border ${isSelected ? 'border-primary' : 'border-border'} bg-surface shadow-sm relative`}>
+                            {(a.processedMimeType && (a.processedMimeType.startsWith('image/') || a.processedMimeType.startsWith('video/'))) ? (
+                              <>
+                                <img
+                                  loading="lazy"
+                                  src={`${API_BASE}/media/${a.id}/thumbnail?token=${encodeURIComponent(auth!.accessToken)}`}
+                                  alt={a.key}
+                                  className="aspect-square w-full object-cover"
+                                  onError={(e) => (e.currentTarget.style.display = 'none')}
+                                />
+                                {a.processedMimeType.startsWith('video/') && (
+                                  <span className="absolute top-2 left-2 bg-black/60 text-white p-1 rounded" title="Video">
+                                    <Video className="w-4 h-4" />
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <div className="aspect-square flex items-center justify-center text-sm text-gray-500">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400">
+                                  <polygon points="23 7 16 12 23 17 23 7" />
+                                  <rect x="1" y="3" width="14" height="18" rx="2" ry="2"></rect>
+                                </svg>
                               </div>
                             )}
-                          </div>
-                        </article>
-                      ))}
+                            <div className="absolute top-2 right-2">
+                              <button
+                                onClick={() => toggleSelect(a.id)}
+                                className={`inline-flex items-center justify-center rounded-md p-1 ${isSelected ? 'bg-primary text-onprimary' : 'bg-black/60 text-white'} hover:opacity-90`}
+                                title={isSelected ? 'Selected' : 'Select'}
+                                aria-label={isSelected ? 'Selected' : 'Select'}
+                              >
+                                {isSelected ? (
+                                  <CheckCircle className="w-5 h-5" />
+                                ) : (
+                                  <Circle className="w-5 h-5" />
+                                )}
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })}
                     </div>
                   </section>
                 ))}

@@ -8,21 +8,16 @@ import { randomUUID } from 'crypto';
 import { basename, join } from 'path';
 import { promises as fs } from 'fs';
 import { spawn } from 'child_process';
-import sharp from 'sharp';
 
 @Injectable()
 export class ConversionService {
   private readonly logger = new Logger(ConversionService.name);
-  private readonly mode: 'docker' | 'local' | 'sharp-only';
 
   constructor(
     private readonly config: ConfigService,
     private readonly storage: StorageService,
     @InjectRepository(MediaAsset) private readonly mediaRepo: Repository<MediaAsset>,
-  ) {
-    const m = this.config.get<string>('MEDIA_CONVERT_MODE', 'docker');
-    this.mode = (m as any) || 'docker';
-  }
+  ) {}
 
   private isHeicLike(mime: string, key: string) {
     const lower = (mime || '').toLowerCase();
@@ -73,13 +68,6 @@ export class ConversionService {
     );
   }
 
-  private async convertHeicToJpegLocal(inputPath: string, outputPath: string) {
-    // Try sharp; requires libvips with libheif
-    const buf = await fs.readFile(inputPath);
-    const out = await sharp(buf).jpeg({ quality: 90 }).toBuffer();
-    await fs.writeFile(outputPath, out);
-  }
-
   private async convertMovToMp4Docker(inputPath: string, outputPath: string) {
     const hostDir = inputPath.replace(/\\/g, '/').replace(/\/[^/]*$/, '');
     const inName = basename(inputPath);
@@ -92,12 +80,22 @@ export class ConversionService {
     ], [{ hostPath: hostDir, containerPath: '/work' }]);
   }
 
-  private async convertMovToMp4Local(inputPath: string, outputPath: string) {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn('ffmpeg', ['-y', '-i', inputPath, '-c:v', 'libx264', '-preset', 'medium', '-crf', '23', '-c:a', 'aac', '-movflags', '+faststart', outputPath], { stdio: 'inherit' });
-      child.on('error', reject);
-      child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited with ${code}`))));
-    });
+  private async generateVideoThumbnailDocker(inputPath: string, outputPath: string, seconds = 1) {
+    const hostDir = inputPath.replace(/\\/g, '/').replace(/\/[^/]*$/, '');
+    const inName = basename(inputPath);
+    const outName = basename(outputPath);
+    await this.runDocker('jrottenberg/ffmpeg:4.4-alpine', [
+      '-ss', seconds.toString(), '-i', `/work/${inName}`, '-frames:v', '1', '-vf', 'scale=512:-2', '-q:v', '3', `/work/${outName}`,
+    ], [{ hostPath: hostDir, containerPath: '/work' }]);
+  }
+
+  private async generateImageThumbnailDocker(inputPath: string, outputPath: string, width = 512) {
+    const hostDir = inputPath.replace(/\\/g, '/').replace(/\/[^/]*$/, '');
+    const inName = basename(inputPath);
+    const outName = basename(outputPath);
+    await this.runDocker('jrottenberg/ffmpeg:4.4-alpine', [
+      '-y', '-i', `/work/${inName}`, '-vf', `scale=${width}:-2`, '-q:v', '3', `/work/${outName}`,
+    ], [{ hostPath: hostDir, containerPath: '/work' }]);
   }
 
   async processAsset(assetId: string) {
@@ -153,20 +151,59 @@ export class ConversionService {
         asset.processedKey = processedKey;
         asset.processedMimeType = outMime;
         asset.processedSize = String(buffer.length);
+        // Generate and store a thumbnail for both images and videos
+        const dir = inputPath.replace(/\\/g, '/').replace(/\/[^/]*$/, '');
+        const thumbPath = join(dir, `thumb-${randomUUID()}.jpg`);
+        if (outMime.startsWith('video/')) {
+          await this.generateVideoThumbnailDocker(inputPath, thumbPath, 1);
+        } else if (outMime.startsWith('image/')) {
+          await this.generateImageThumbnailDocker(inputPath, thumbPath, 512);
+        }
+        if (await fs.stat(thumbPath).then(() => true).catch(() => false)) {
+          const thumbBuf = await fs.readFile(thumbPath);
+          const thumbKey = this.buildProcessedKey(asset, 'jpg');
+          await this.storage.putObjectBuffer(thumbKey, thumbBuf, 'image/jpeg');
+          asset.thumbnailKey = thumbKey;
+          asset.thumbnailMimeType = 'image/jpeg';
+          asset.thumbnailSize = String(thumbBuf.length);
+          await fs.unlink(thumbPath).catch(() => {});
+        }
       } else if (needsConversion) {
         const outPath = join(inputPath.replace(/\\/g, '/').replace(/\/[^/]*$/, ''), `out-${randomUUID()}.${outExt}`);
         if (outExt === 'jpg') {
-          if (this.mode === 'docker') await this.convertHeicToJpegDocker(inputPath, outPath);
-          else await this.convertHeicToJpegLocal(inputPath, outPath);
+          await this.convertHeicToJpegDocker(inputPath, outPath);
         } else if (outExt === 'mp4') {
-          if (this.mode === 'docker') await this.convertMovToMp4Docker(inputPath, outPath);
-          else await this.convertMovToMp4Local(inputPath, outPath);
+          await this.convertMovToMp4Docker(inputPath, outPath);
+          // Generate video thumbnail from the converted output
+          const dir = inputPath.replace(/\\/g, '/').replace(/\/[^/]*$/, '');
+          const thumbPath = join(dir, `thumb-${randomUUID()}.jpg`);
+          await this.generateVideoThumbnailDocker(outPath, thumbPath, 1);
+          const thumbBuf = await fs.readFile(thumbPath);
+          const thumbKey = this.buildProcessedKey(asset, 'jpg');
+          await this.storage.putObjectBuffer(thumbKey, thumbBuf, 'image/jpeg');
+          asset.thumbnailKey = thumbKey;
+          asset.thumbnailMimeType = 'image/jpeg';
+          asset.thumbnailSize = String(thumbBuf.length);
+          await fs.unlink(thumbPath).catch(() => {});
         }
         const buf = await fs.readFile(outPath);
         await this.storage.putObjectBuffer(processedKey, buf, outMime);
         asset.processedKey = processedKey;
         asset.processedMimeType = outMime;
         asset.processedSize = String(buf.length);
+        // If converted output is an image, generate its thumbnail as well
+        if (outMime.startsWith('image/')) {
+          const dir = inputPath.replace(/\\/g, '/').replace(/\/[^/]*$/, '');
+          const thumbPath = join(dir, `thumb-${randomUUID()}.jpg`);
+          await this.generateImageThumbnailDocker(outPath, thumbPath, 512);
+          const thumbBuf = await fs.readFile(thumbPath);
+          const thumbKey = this.buildProcessedKey(asset, 'jpg');
+          await this.storage.putObjectBuffer(thumbKey, thumbBuf, 'image/jpeg');
+          asset.thumbnailKey = thumbKey;
+          asset.thumbnailMimeType = 'image/jpeg';
+          asset.thumbnailSize = String(thumbBuf.length);
+          await fs.unlink(thumbPath).catch(() => {});
+        }
         await fs.unlink(outPath).catch(() => {});
       }
 

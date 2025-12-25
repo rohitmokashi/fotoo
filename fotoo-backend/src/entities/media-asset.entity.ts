@@ -31,6 +31,16 @@ export class MediaAsset {
   @Column('bigint', { nullable: true })
   processedSize?: string | null;
 
+  // Stored thumbnail for videos (generated during processing)
+  @Column({ nullable: true })
+  thumbnailKey?: string;
+
+  @Column({ nullable: true })
+  thumbnailMimeType?: string;
+
+  @Column('bigint', { nullable: true })
+  thumbnailSize?: string | null;
+
   // Processing lifecycle: pending -> processing -> processed | failed
   @Column({ type: 'varchar', default: 'pending' })
   status: 'pending' | 'processing' | 'processed' | 'failed';

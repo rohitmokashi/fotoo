@@ -7,7 +7,6 @@ import { StorageService } from '../storage/storage.service';
 import { AlbumsService } from '../albums/albums.service';
 import { randomUUID } from 'crypto';
 import type { Readable } from 'stream';
-import sharp from 'sharp';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 
@@ -114,14 +113,26 @@ export class MediaService {
     let allowed = requesterId ? asset.owner?.id === requesterId : false;
     if (!allowed && requesterId) allowed = await this.albums.hasAccessToAsset(requesterId, id);
     if (!allowed) return null;
-    // Only generate thumbnails for processed images
-    if (!asset.processedMimeType || !asset.processedMimeType.startsWith('image/')) return null;
-    if (!asset.processedKey) return null;
-    const { body } = await this.storage.getObjectStream(asset.processedKey);
-    const transformer = sharp().resize({ width, fit: 'cover', withoutEnlargement: true }).webp({ quality: 70 });
-    const out = (body as Readable).pipe(transformer);
-    return { stream: out as unknown as Readable, contentType: 'image/webp' };
+    if (!asset.processedMimeType) return null;
+    if (asset.processedMimeType.startsWith('image/')) {
+      if (asset.thumbnailKey) {
+        const { body } = await this.storage.getObjectStream(asset.thumbnailKey);
+        return { stream: body as Readable, contentType: asset.thumbnailMimeType || 'image/jpeg' };
+      }
+      // Fallback: serve processed image directly (no local transformation)
+      if (asset.processedKey) {
+        const { body } = await this.storage.getObjectStream(asset.processedKey);
+        return { stream: body as Readable, contentType: asset.processedMimeType };
+      }
+      return null;
+    }
+    if (asset.processedMimeType.startsWith('video/')) {
+      if (!asset.thumbnailKey) return null; // Require stored thumbnail for videos
+      const { body } = await this.storage.getObjectStream(asset.thumbnailKey);
+      return { stream: body as Readable, contentType: asset.thumbnailMimeType || 'image/jpeg' };
+    }
+    return null;
   }
 
-  // Frontend handles format conversion; backend remains read-only for original objects.
+  // Backend performs all format conversions and thumbnail generation via Docker containers.
 }

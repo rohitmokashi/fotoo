@@ -52,7 +52,7 @@ export async function listAlbumMedia(albumId: string, token: string): Promise<Me
   return res.json();
 }
 
-export async function requestAlbumUploadUrl(albumId: string, file: File, token: string): Promise<{ uploadUrl: string }>{
+export async function requestAlbumUploadUrl(_albumId: string, _file: File, _token: string): Promise<{ uploadUrl: string }> {
   throw new Error('Direct album uploads are disabled');
 }
 

@@ -48,12 +48,6 @@ export default function AlbumPanel({ token, selected, onSelect }: Props) {
     <div className="rounded-xl border border-border bg-surface p-4">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-semibold text-text">Albums</h2>
-        <button
-          className="text-sm underline"
-          onClick={() => onSelect(null)}
-        >
-          View all media
-        </button>
       </div>
 
       <form onSubmit={onCreate} className="flex gap-2 mb-3">
