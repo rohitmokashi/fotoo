@@ -67,14 +67,8 @@ export class ConversionService {
     const inName = basename(inputPath);
     const outName = basename(outputPath);
     await this.runDocker(
-      'jrottenberg/ffmpeg:6.1-alpine',
-      [
-        '-i',
-        `/work/${inName}`,
-        '-frames:v',
-        '1',
-        `/work/${outName}`,
-      ],
+      'heic-converter',
+      [`/work/${inName}`, `/work/${outName}`],
       [{ hostPath: hostDir, containerPath: '/work' }],
     );
   }
