@@ -43,7 +43,7 @@ export class MediaService {
     const m = String(dateForKey.getUTCMonth() + 1).padStart(2, '0');
     const d = String(dateForKey.getUTCDate()).padStart(2, '0');
     const safeName = params.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const key = `${owner.id}/${y}/${m}/${d}/${randomUUID()}_${safeName}`;
+    const key = `${owner.username}/${y}/${m}/${d}/${randomUUID()}_${safeName}`;
 
     const bucket = this.storage.getBucket();
 
@@ -53,7 +53,6 @@ export class MediaService {
       key,
       mimeType: params.mimeType,
       size: String(params.size),
-      title: safeName,
       capturedAt: captured || undefined,
     });
     const saved = await this.mediaRepo.save(asset);

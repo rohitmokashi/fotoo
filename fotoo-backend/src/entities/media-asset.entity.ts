@@ -48,11 +48,7 @@ export class MediaAsset {
   @Column({ type: 'text', nullable: true })
   error?: string | null;
 
-  @Column({ nullable: true })
-  title?: string;
-
-  @Column({ nullable: true })
-  description?: string;
+  // Removed unused title/description fields to simplify schema
 
   @CreateDateColumn()
   createdAt: Date;
