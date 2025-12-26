@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Upload, Trash2, Video, CheckCircle, Circle, FolderOpen, PenSquare, UserCog, X, Images } from 'lucide-react';
+import { Upload, Trash2, Video, CheckCircle, Circle, FolderOpen, PenSquare, UserCog, X, Images, CheckSquare, Square, Download } from 'lucide-react';
 // Using lucide-react for consistent, high-quality icons
 import ThemeSwitcher from './components/ThemeSwitcher';
 import LoginForm from './components/LoginForm';
@@ -300,6 +300,34 @@ function App() {
     }
   };
 
+  const downloadSelected = async () => {
+    if (!auth?.accessToken) return;
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    try {
+      const res = await fetch(`${API_BASE}/media/download-zip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader(auth.accessToken) },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) {
+        alert('Failed to create ZIP');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `fotoo-selected-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Download error');
+    }
+  };
+
   const loggedIn = !!auth?.accessToken;
   const isAdmin = auth?.user?.role === 'admin';
   const grouping = useMemo(() => groupByDay(assets), [assets]);
@@ -406,6 +434,14 @@ function App() {
                   )}
                 </button>
                 <button
+                  onClick={downloadSelected}
+                  disabled={selected.size === 0}
+                  className="inline-flex items-center rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
+                  title="Download Selected"
+                >
+                  <Download className="w-5 h-5" />
+                </button>
+                <button
                   onClick={() => { clearAuth(); setAuthState(null); setAssets([]); }}
                   className="rounded-lg border border-border bg-surface px-3 py-2 text-sm"
                 >
@@ -464,7 +500,37 @@ function App() {
                 {grouping.sortedKeys.map((key) => (
                   <section key={key} className="mb-6">
                     <div className="my-2">
-                      <div className="text-lg font-semibold text-text">{formatDateHeading(key)}</div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-lg font-semibold text-text">{formatDateHeading(key)}</div>
+                        {(() => {
+                          const dayIds = grouping.groups[key].map((a) => a.id);
+                          const dayAllSelected = dayIds.every((id) => selected.has(id));
+                          return (
+                            <button
+                              onClick={() => {
+                                setSelected((prev) => {
+                                  const next = new Set(prev);
+                                  if (dayAllSelected) {
+                                    for (const id of dayIds) next.delete(id);
+                                  } else {
+                                    for (const id of dayIds) next.add(id);
+                                  }
+                                  return next;
+                                });
+                              }}
+                              className={`inline-flex items-center justify-center rounded-md border border-border bg-surface p-1 hover:bg-muted ${dayAllSelected ? 'text-primary border-primary' : ''}`}
+                              title={dayAllSelected ? 'Clear selection for this day' : 'Select all for this day'}
+                              aria-label={dayAllSelected ? 'Clear selection for this day' : 'Select all for this day'}
+                            >
+                              {dayAllSelected ? (
+                                <Square className="w-5 h-5" />
+                              ) : (
+                                <CheckSquare className="w-5 h-5" />
+                              )}
+                            </button>
+                          );
+                        })()}
+                      </div>
                       <div className="border-t border-border mt-2" />
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">

@@ -5,6 +5,7 @@ import { IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../utils/jwt-auth.guard';
 import { AlbumsService } from '../albums/albums.service';
+import { IsArray, ArrayNotEmpty } from 'class-validator';
 
 class UploadUrlDto {
   @IsString()
@@ -21,6 +22,13 @@ class UploadUrlDto {
   @IsOptional()
   @IsString()
   capturedAt?: string; // ISO timestamp from client metadata (EXIF/video)
+}
+
+class DownloadZipDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @Type(() => String)
+  ids: string[];
 }
 
 @Controller('media')
@@ -61,6 +69,20 @@ export class MediaController {
     if (!result) return res.status(404).send({ message: 'Not found' });
     res.setHeader('Content-Type', result.contentType);
     result.stream.pipe(res);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('download-zip')
+  async downloadZip(@Req() req: any, @Body() dto: DownloadZipDto, @Res() res: Response) {
+    const zip = await this.media.getZipOfAssets(dto.ids, req.user.userId);
+    if (!zip) return res.status(404).send({ message: 'No accessible assets' });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zip.filename}"`);
+    zip.archive.on('error', (err) => {
+      try { res.status(500).end(); } catch {}
+    });
+    zip.archive.pipe(res);
+    await zip.archive.finalize();
   }
 
   @UseGuards(JwtAuthGuard)

@@ -7,6 +7,8 @@ import { StorageService } from '../storage/storage.service';
 import { AlbumsService } from '../albums/albums.service';
 import { randomUUID } from 'crypto';
 import type { Readable } from 'stream';
+import { createArchiver, Archiver } from '../utils/archiver-shim';
+import { basename } from 'path';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 
@@ -101,7 +103,16 @@ export class MediaService {
     const asset = await this.getAsset(id, ownerId);
     if (!asset) return false;
     await this.albums.detachAssetFromAll(id);
-    await this.storage.deleteObject(asset.key);
+    // Delete original
+    try { await this.storage.deleteObject(asset.key); } catch {}
+    // Delete processed variant if present
+    if (asset.processedKey) {
+      try { await this.storage.deleteObject(asset.processedKey); } catch {}
+    }
+    // Delete stored thumbnail if present
+    if (asset.thumbnailKey) {
+      try { await this.storage.deleteObject(asset.thumbnailKey); } catch {}
+    }
     await this.mediaRepo.delete({ id });
     return true;
   }
@@ -131,6 +142,30 @@ export class MediaService {
       return { stream: body as Readable, contentType: asset.thumbnailMimeType || 'image/jpeg' };
     }
     return null;
+  }
+
+  async getZipOfAssets(ids: string[], requesterId?: string): Promise<{ archive: Archiver; filename: string } | null> {
+    if (!ids || ids.length === 0) return null;
+    const archive = createArchiver();
+    let included = 0;
+    for (const id of ids) {
+      const asset = await this.mediaRepo.findOne({ where: { id }, relations: ['owner'] });
+      if (!asset) continue;
+      let allowed = requesterId ? asset.owner?.id === requesterId : false;
+      if (!allowed && requesterId) allowed = await this.albums.hasAccessToAsset(requesterId, id);
+      if (!allowed) continue;
+      const key = asset.processedKey || asset.key;
+      const safeName = basename(key);
+      const { body } = await this.storage.getObjectStream(key);
+      archive.append(body as Readable, { name: safeName });
+      included++;
+    }
+    if (included === 0) {
+      archive.destroy();
+      return null;
+    }
+    const fname = `fotoo_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.zip`;
+    return { archive, filename: fname };
   }
 
   // Backend performs all format conversions and thumbnail generation via Docker containers.
